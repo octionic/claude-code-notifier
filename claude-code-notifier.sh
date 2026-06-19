@@ -36,6 +36,13 @@ EDITOR_SCHEME="${CLAUDE_NOTIFIER_SCHEME:-vscode}"
 #------------------------------------------------------------------------------
 input=$(cat)
 
+# Skip entirely when running inside the Claude Code Desktop app: it has its
+# own notifications, and the editor click action would hijack an unrelated
+# window. Only notify for terminal/CLI sessions (iTerm, Terminal, VS Code).
+if [ "$CLAUDE_CODE_ENTRYPOINT" = "claude-desktop" ]; then
+  exit 0
+fi
+
 message=$(echo "$input" | jq -r '.message // "Claude Code Notification"')
 hook_event=$(echo "$input" | jq -r '.hook_event_name // "Unknown"')
 cwd=$(echo "$input" | jq -r '.cwd // ""')
@@ -117,22 +124,53 @@ fi
 #------------------------------------------------------------------------------
 case "$(uname -s)" in
   Darwin*)
-    # macOS - use terminal-notifier.
-    # If we know the session's cwd, attach a click action that opens the
-    # folder via the editor's URL handler. The editor focuses the existing
-    # window (= native tab) that already has this folder open. No Accessibility
-    # permission required. Spaces in the path are percent-encoded.
-    if [ -n "$cwd" ]; then
-      url="${EDITOR_SCHEME}://file${cwd// /%20}"
-      exec_cmd="open \"$url\""
-      # NOTE: do NOT add -sender here. -sender makes the click just activate
-      # that app's bundle and overrides -execute, so the URL never opens.
-      terminal-notifier -title "$notify_title" \
-        -message "$message" -sound default \
-        -execute "$exec_cmd"
-    else
-      terminal-notifier -title "$notify_title" -message "$message" -sound default
+    # macOS - use terminal-notifier, adapting the icon + click action to the
+    # terminal Claude Code is running in (detected via $TERM_PROGRAM):
+    #   - VS Code:  click opens the exact folder/tab via the editor URL handler.
+    #   - iTerm / Terminal / Termius: no per-tab URL exists, so the click just
+    #     activates (brings forward) that terminal app.
+    #   - Unknown terminal: notify with no click action.
+    # The icon is a right-side thumbnail via -contentImage (the corner icon
+    # can't be changed without -sender, which would break the click).
+
+    # Map the terminal to its app bundle + bundle id.
+    term_app=""
+    term_bid=""
+    case "$TERM_PROGRAM" in
+      vscode)          term_app="/Applications/Visual Studio Code.app";       term_bid="com.microsoft.VSCode" ;;
+      iTerm.app)       term_app="/Applications/iTerm.app";                     term_bid="com.googlecode.iterm2" ;;
+      Apple_Terminal)  term_app="/System/Applications/Utilities/Terminal.app"; term_bid="com.apple.Terminal" ;;
+      *)
+        case "$(printf '%s' "$TERM_PROGRAM" | tr '[:upper:]' '[:lower:]')" in
+          *termius*) term_app="/Applications/Termius.app"; term_bid="com.termius-dmg.mac" ;;
+        esac
+        ;;
+    esac
+
+    # Resolve the icon for the -contentImage thumbnail (CLAUDE_NOTIFIER_ICON
+    # overrides; otherwise use the detected terminal's own icon).
+    icon_args=()
+    icon_path="${CLAUDE_NOTIFIER_ICON:-}"
+    if [ -z "$icon_path" ] && [ -n "$term_app" ] && [ -d "$term_app" ]; then
+      icon_file=$(defaults read "$term_app/Contents/Info" CFBundleIconFile 2>/dev/null)
+      case "$icon_file" in *.icns|"") ;; *) icon_file="$icon_file.icns" ;; esac
+      [ -n "$icon_file" ] && icon_path="$term_app/Contents/Resources/$icon_file"
     fi
+    [ -n "$icon_path" ] && [ -f "$icon_path" ] && icon_args=(-contentImage "$icon_path")
+
+    # Build the click action.
+    click_args=()
+    if [ "$TERM_PROGRAM" = "vscode" ] && [ -n "$cwd" ]; then
+      # VS Code can focus the exact window/tab for this folder (spaces encoded).
+      url="${EDITOR_SCHEME}://file${cwd// /%20}"
+      click_args=(-execute "open \"$url\"")
+    elif [ -n "$term_bid" ]; then
+      # Other terminals: just bring the app forward (no per-tab targeting).
+      click_args=(-activate "$term_bid")
+    fi
+
+    terminal-notifier -title "$notify_title" -message "$message" -sound default \
+      "${icon_args[@]}" "${click_args[@]}"
     ;;
 
   Linux*)
