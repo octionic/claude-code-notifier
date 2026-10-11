@@ -106,9 +106,28 @@ screensaver_active() {
 
 #------------------------------------------------------------------------------
 # Send notification via ntfy.sh (remote push to phone)
+#
+# When the session is connected via Remote Control, Claude Code exposes its
+# remote session id as $CLAUDE_CODE_BRIDGE_SESSION_ID. Tapping the push (or its
+# "Open Claude Code" action) then opens that session in the Claude mobile app
+# via claude://code/<session-id>.
 #------------------------------------------------------------------------------
 send_ntfy() {
-  curl -s -H "Title: ${notify_title}" -d "$message" "ntfy.sh/${NTFY_CHANNEL}" >/dev/null 2>&1
+  local click_url=""
+  [ -n "$CLAUDE_CODE_BRIDGE_SESSION_ID" ] && click_url="claude://code/${CLAUDE_CODE_BRIDGE_SESSION_ID}"
+
+  local payload
+  payload=$(jq -n \
+    --arg topic "$NTFY_CHANNEL" \
+    --arg title "$notify_title" \
+    --arg message "$message" \
+    --arg url "$click_url" \
+    '{topic: $topic, title: $title, message: $message}
+     + (if $url != "" then
+          {click: $url, actions: [{action: "view", label: "Open Claude Code", url: $url}]}
+        else {} end)')
+
+  curl -s -H "Content-Type: application/json" -d "$payload" "https://ntfy.sh" >/dev/null 2>&1
 }
 
 #------------------------------------------------------------------------------
@@ -164,6 +183,19 @@ case "$(uname -s)" in
       # VS Code can focus the exact window/tab for this folder (spaces encoded).
       url="${EDITOR_SCHEME}://file${cwd// /%20}"
       click_args=(-execute "open \"$url\"")
+    elif [ "$TERM_PROGRAM" = "iTerm.app" ] && [ -n "$ITERM_SESSION_ID" ]; then
+      # iTerm2 is scriptable: select the exact window/tab/pane of this session.
+      # ITERM_SESSION_ID is "w0t0p0:<UUID>"; the UUID is the session's unique id.
+      sid="${ITERM_SESSION_ID#*:}"
+      click_args=(-execute "osascript \
+        -e 'tell application id \"com.googlecode.iterm2\"' \
+        -e 'repeat with w in windows' \
+        -e 'repeat with t in tabs of w' \
+        -e 'repeat with s in sessions of t' \
+        -e 'if unique id of s is \"$sid\" then' \
+        -e 'select w' -e 'tell t to select' -e 'tell s to select' -e 'activate' -e 'return' \
+        -e 'end if' -e 'end repeat' -e 'end repeat' -e 'end repeat' -e 'activate' \
+        -e 'end tell'")
     elif [ -n "$term_bid" ]; then
       # Other terminals: just bring the app forward (no per-tab targeting).
       click_args=(-activate "$term_bid")

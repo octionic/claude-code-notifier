@@ -114,6 +114,12 @@ export CLAUDE_NOTIFIER_SCHEME="vscode-insiders"
 For remote push, install the [ntfy app](https://ntfy.sh/app) on your phone and
 subscribe to the same channel name.
 
+If the session is connected via **Remote Control** (`/remote-control`), the push
+links back to it: tapping the notification (or its **Open Claude Code** action)
+opens `claude://code/<session-id>` in the Claude mobile app. The id comes from
+`$CLAUDE_CODE_BRIDGE_SESSION_ID`, which Claude Code sets for remote-controlled
+sessions; without it the push is sent without a link.
+
 ---
 
 ## How the click-to-focus works (macOS)
@@ -124,9 +130,9 @@ The script detects which terminal Claude Code is running in via the
 | Terminal (`$TERM_PROGRAM`) | Icon shown | Click action |
 | -------------------------- | ---------- | ------------ |
 | VS Code (`vscode`)         | VS Code    | Opens `vscode://file/<cwd>` → focuses the **exact window/tab** for that folder |
-| iTerm (`iTerm.app`)        | iTerm      | Brings **iTerm** to the front (cannot target a specific tab) |
+| iTerm2 (`iTerm.app`)       | iTerm      | Selects the **exact window/tab/pane** via AppleScript (`$ITERM_SESSION_ID`); asks for Automation permission on first click |
 | Terminal (`Apple_Terminal`)| Terminal   | Brings **Terminal** to the front (cannot target a specific tab) |
-| Termius (`*termius*`)      | Termius    | Brings **Termius** to the front (cannot target a specific tab) |
+| Termius (`*termius*`)      | Termius    | Brings **Termius** to the front (cannot target a specific tab: Termius has no AppleScript support or tab URL scheme) |
 | Anything else / unknown    | default    | Notification only, no click action |
 
 For VS Code, the session's working directory (`cwd`, supplied by Claude Code) is
